@@ -1,21 +1,14 @@
 <?php
 session_start();
 
+include('php/conec.php');
+$conn = $conexion;
 
-$servername = "localhost";
-$username = "root";
-$password = "";
-$dbname = "gb"; 
-$conn = new mysqli($servername, $username, $password, $dbname);
-
-// Verifica
 if ($conn->connect_error) {
     die("Conexión fallida: " . $conn->connect_error);
 }
 
-// paginación
-$limit = 5; 
-$pagina_actual = isset($_GET['pagina']) ? (int)$_GET['pagina'] : 1; 
+$pagina_actual = isset($_GET['pagina']) ? (int) $_GET['pagina'] : 1;
 
 // egistro de inicio para la consulta
 $inicio = ($pagina_actual - 1) * $limit;
@@ -26,9 +19,42 @@ $result_count = $conn->query($consulta_count);
 $total = mysqli_fetch_assoc($result_count)['ct'];
 $paginas = ceil($total / $limit); // Total de páginas necesarias
 
-// pproductos para la página actual
-$consulta = "SELECT id_v, nom_v, desc_v, fecha_lanz, clasif_v, genero_v, precio, imagen FROM videojuegos LIMIT $inicio, $limit";
+
+$search = isset($_GET['search']) ? $_GET['search'] : '';
+$gen = isset($_GET['gene']) ? $_GET['gene'] : '';      //obtenemos lo que hay en el formulario de busqueda
+$clasi = isset($_GET['clas']) ? $_GET['clas'] : '';
+
+
+$where = [];  // creamos un array...
+
+if ($search) { //si se busca por palabra...
+    $where[] = "(nom_v LIKE '%$search%' OR desc_v LIKE '%$search%')";  //guardamos en el array where con su debida consulta
+}
+
+if ($gen) { //si se busca por genero
+    $where[] = "genero_v = '$gen'";  //guardamos en el array where cuando genero_v = 'loquehayabuscadoelusuario'
+}
+
+if ($clasi) {
+    $where[] = "clasif_v = '$clasi'";
+}
+
+$vwhere = count($where) > 0 ? 'WHERE ' . implode(' AND ', $where) : '';
+
+
+if ($search || $search && $gen || $search && $clasi && $gen || $search && $clasi) { //si hay busqueda no se mostrara paguinacion
+    $consulta_count = "SELECT COUNT(*) as ct FROM videojuegos $vwhere";
+    $consulta = "SELECT id_v, nom_v, desc_v, fecha_lanz, clasif_v, genero_v, precio, imagen FROM videojuegos $vwhere";
+} else { //sino se mostrata áginacion
+    $consulta_count = "SELECT COUNT(*) as ct FROM videojuegos";
+    $consulta = "SELECT id_v, nom_v, desc_v, fecha_lanz, clasif_v, genero_v, precio, imagen FROM videojuegos LIMIT $inicio, $limit";
+}
+
 $result = $conn->query($consulta);
+
+$generos = $conn->query("SELECT genero_v FROM videojuegos GROUP BY genero_v")->fetch_all(MYSQLI_ASSOC); //obtenemos los generos de la base de datos 
+$clasi = $conn->query("SELECT clasif_v FROM videojuegos GROUP BY clasif_v")->fetch_all(MYSQLI_ASSOC);  //obtenemos las clasificaciones de la base de datos 
+
 
 //agg productos al carrito
 if (isset($_POST['add_to_cart'])) {
@@ -57,17 +83,20 @@ if (isset($_POST['clear_cart'])) {
 }
 
 //número de productos en el carrito
-function getCarritoCount() {
+function getCarritoCount()
+{
     return isset($_SESSION['carrito']) ? count($_SESSION['carrito']) : 0;
 }
 
 ?>
 <!DOCTYPE html>
 <html lang="es">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>THE BLACK-GAMES</title>
+    <link rel="stylesheet" href="css/num_pg.css">
     <style>
         header {
             display: flex;
@@ -156,117 +185,141 @@ function getCarritoCount() {
             display: flex;
             justify-content: space-between;
             align-items: center;
-       margin: 10px 0;
+            margin: 10px 0;
         }
     </style>
 </head>
+
 <body>
 
-<header>
-    <div class="cart-icon" onclick="toggleCart()">
-        <img src="carrito.jpg" alt=""> <span id="cart-count"><?php echo getCarritoCount(); ?></span>
-    </div>
-    <h1>BLACK-GAMES</h1>
-</header>
-
-<main>
-<div id="product-list">
-    <?php while ($product = mysqli_fetch_assoc($result)): ?>
-        <div class="product">
-         
-            <img src="<?php echo htmlspecialchars($product['imagen']); ?>" alt="<?php echo htmlspecialchars($product['nom_v']); ?>" style="width: 150px; height: auto; margin-bottom: 10px;">
-            
-            <h3><?php echo htmlspecialchars($product['nom_v']); ?></h3>
- 
-            <p>Descripción: <?php echo htmlspecialchars($product['desc_v']); ?></p>
-            <p><strong>Precio:</strong> $<?php echo number_format($product['precio'], 2); ?></p>
-            
-            <!-- Formulario para agregar al carrito -->
-            <form method="POST">
-                <input type="hidden" name="product_id" value="<?php echo $product['id_v']; ?>">
-                <button type="submit" name="add_to_cart">Agregar al Carrito</button>
-            </form>
+    <header>
+        <div class="cart-icon" onclick="toggleCart()">
+            <img src="carrito.jpg" alt=""> <span id="cart-count">0</span>
         </div>
-    <?php endwhile; ?>
-</div>
-    <!-- Paginacion de new -->
-    <div class="pagination">
-        <?php for ($i = 1; $i <= $paginas; $i++): ?>
-            <a href="?pagina=<?php echo $i; ?>"><button class="<?php echo $i == $pagina_actual ? 'active' : ''; ?>"><?php echo $i; ?></button></a>
-        <?php endfor; ?>
-    </div>
-</main>
 
-<!-- Carrooooooooo -->
-<aside id="cart-sidebar" class="hidden">
-    <h2>Tu Carrito</h2>
-    <ul id="cart-items">
-        <?php 
-        $subtotal_total = 0;
-        $iva_total = 0;
-        $id_productos = [];  //almacena los ID de los productos
-        if (isset($_SESSION['carrito']) && count($_SESSION['carrito']) > 0): ?>
-            <?php foreach ($_SESSION['carrito'] as $id => $quantity): ?>
-                <?php
-                //detalles del producto
-                $consulta = "SELECT id_v, nom_v, precio FROM videojuegos WHERE id_v = $id";
-                $result = $conn->query($consulta);
-                $producto = $result->fetch_assoc();
-                
-                //subtotal e IVA
-                $subtotal = $producto['precio'] * $quantity;
-                $iva = $subtotal * 0.16;
-                
-                $subtotal_total += $subtotal;
-                $iva_total += $iva;
-                $id_productos[] = $id;
-                ?>
-                <li>
-                    <span><?php echo htmlspecialchars($producto['nom_v']); ?></span>
-                    <span>Precio: $<?php echo number_format($producto['precio'], 2); ?></span>
-                    <span>Cantidad: <?php echo $quantity; ?></span>
-                    <span>Subtotal: $<?php echo number_format($subtotal, 2); ?></span>
-                    <span>IVA: $<?php echo number_format($iva, 2); ?></span>
-                    <form method="POST" style="display: inline;">
-                        <input type="hidden" name="product_id" value="<?php echo $id; ?>">
-                        <button type="submit" name="remove_from_cart">Quitar</button>
+
+        <form method="GET">
+            <input type="text" name="search" placeholder="Buscar" value="<?php echo $search; ?>">
+            <select name="gene">
+                <option value="">Selecciona Género</option>
+                <?php foreach ($generos as $genero): ?>
+                    <option value="<?php echo $genero['genero_v']; ?>" <?php echo $gen == $genero['genero_v'] ? 'selected' : ''; ?>>
+                        <?php echo $genero['genero_v']; ?>
+                    </option>
+                <?php endforeach; ?>
+            </select>
+            <select name="clas">
+                <option value="">Selecciona Clasificación</option>
+                <?php foreach ($clasi as $clas): ?>
+                    <option value="<?php echo $clas['clasif_v']; ?>" <?php echo $clasi == $clas['clasif_v'] ? 'selected' : ''; ?>>
+                        <?php echo $clas['clasif_v']; ?>
+                    </option>
+                <?php endforeach; ?>
+            </select>
+            <input type="submit" value="Buscar">
+        </form>
+
+        <h1>BLACK-GAMES</h1>
+    </header>
+
+    <main>
+        <div id="product-list">
+            <?php while ($product = mysqli_fetch_assoc($result)): ?>
+                <div class="product">
+
+                    <img src="<?php echo htmlspecialchars($product['imagen']); ?>"
+                        alt="<?php echo htmlspecialchars($product['nom_v']); ?>"
+                        style="width: 150px; height: auto; margin-bottom: 10px;">
+
+                    <h3><?php echo htmlspecialchars($product['nom_v']); ?></h3>
+
+                    <p>Descripción: <?php echo htmlspecialchars($product['desc_v']); ?></p>
+                    <p><strong>Precio:</strong> $<?php echo number_format($product['precio'], 2); ?></p>
+                    <p><strong>Género:</strong> <?php echo htmlspecialchars($product['genero_v']); ?></p>
+                    <p><strong>Clasificación:</strong> <?php echo htmlspecialchars($product['clasif_v']); ?></p>
+
+                    <!-- Formulario para agregar al carrito -->
+                    <form method="POST">
+                        <input type="hidden" name="product_id" value="<?php echo $product['id_v']; ?>">
+                        <button type="submit" name="add_to_cart">Agregar al Carrito</button>
                     </form>
-                </li>
-            <?php endforeach; ?>
-        <?php else: ?>
-            <li>Tu carrito está vacío.</li>
-        <?php endif; ?>
-    </ul>
-    <div>
-        <h3>Resumen de la Compra</h3>
-        <p><strong>Subtotal:</strong> $<?php echo number_format($subtotal_total, 2); ?></p>
-        <p><strong>IVA (16%):</strong> $<?php echo number_format($iva_total, 2); ?></p>
-        <p><strong>Total:</strong> $<?php echo number_format($subtotal_total + $iva_total, 2); ?></p>
-    </div>
-    <form method="POST">
-        <button type="submit" name="clear_cart">Vaciar carrito</button>
-    </form>
-    <a href="checkout.php"><button>Comprar</button></a>
-</aside>
+                </div>
+            <?php endwhile; ?>
+        </div>
+        <!-- Paginacion de new -->
+        <div class="pagination"
+            style=" display: flex; align-items: center; flex-direction: row; justify-content: center; ">
+            <?php for ($i = 1; $i <= $paginas; $i++): ?>
+                <a href="?pagina=<?php echo $i; ?>"><button
+                        class="<?php echo $i == $pagina_actual ? 'active' : ''; ?>"><?php echo $i; ?></button></a>
+            <?php endfor; ?>
+        </div>
+    </main>
+
+    <!-- Carrooooooooo -->
+    <aside id="cart-sidebar" class="hidden">
+        <h2>Tu Carrito</h2>
+        <ul id="cart-items">
+            <?php
+            $subtotal_total = 0;
+            $iva_total = 0;
+            $id_productos = [];  //almacena los ID de los productos
+            if (isset($_SESSION['carrito']) && count($_SESSION['carrito']) > 0): ?>
+                <?php foreach ($_SESSION['carrito'] as $id => $quantity): ?>
+                    <?php
+                    //detalles del producto
+                    $consulta = "SELECT id_v, nom_v, precio FROM videojuegos WHERE id_v = $id";
+                    $result = $conn->query($consulta);
+                    $producto = $result->fetch_assoc();
+
+                    //subtotal e IVA
+                    $subtotal = $producto['precio'] * $quantity;
+                    $iva = $subtotal * 0.16;
+
+                    $subtotal_total += $subtotal;
+                    $iva_total += $iva;
+                    $id_productos[] = $id;
+                    ?>
+                    <li>
+                        <span><?php echo htmlspecialchars($producto['nom_v']); ?></span>
+                        <span>Precio: $<?php echo number_format($producto['precio'], 2); ?></span>
+                        <span>Cantidad: <?php echo $quantity; ?></span>
+                        <span>Subtotal: $<?php echo number_format($subtotal, 2); ?></span>
+                        <span>IVA: $<?php echo number_format($iva, 2); ?></span>
+                        <form method="POST" style="display: inline;">
+                            <input type="hidden" name="product_id" value="<?php echo $id; ?>">
+                            <button type="submit" name="remove_from_cart">Quitar</button>
+                        </form>
+                    </li>
+                <?php endforeach; ?>
+            <?php else: ?>
+                <li>Tu carrito está vacío.</li>
+            <?php endif; ?>
+        </ul>
+        <div>
+            <h3>Resumen de la Compra</h3>
+            <p><strong>Subtotal:</strong> $<?php echo number_format($subtotal_total, 2); ?></p>
+            <p><strong>IVA (16%):</strong> $<?php echo number_format($iva_total, 2); ?></p>
+            <p><strong>Total:</strong> $<?php echo number_format($subtotal_total + $iva_total, 2); ?></p>
+        </div>
+        <form method="POST">
+            <button type="submit" name="clear_cart">Vaciar carrito</button>
+        </form>
+        <a href="tarjeta.php"><button>Comprar</button></a>
+    </aside>
 
 
 
-
-
-
-
-
-<script>
-    function toggleCart() {
-        const cartSidebar = document.getElementById("cart-sidebar");
-        cartSidebar.classList.toggle("visible");
-        cartSidebar.classList.toggle("hidden");
-    }
-</script>
-
+    <script>
+        function toggleCart() {
+            const cartSidebar = document.getElementById("cart-sidebar");
+            cartSidebar.classList.toggle("visible");
+            cartSidebar.classList.toggle("hidden");
+        }
+    </script>
 </body>
-</html>
 
+</html>
 <?php
 $conn->close(); // Cerrarconexión con gb
 ?>
